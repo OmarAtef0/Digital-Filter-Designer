@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QShortcut ,QSizePolicy
 from scipy.signal import freqz, lfilter, zpk2tf, filtfilt
 from task6 import Ui_MainWindow
@@ -8,12 +8,14 @@ import pyqtgraph as pg
 from scipy.signal import freqz
 import pandas as pd
 import os
+import sys
 import scipy
 import scipy.signal
 import math
 from numpy import *
 from numpy.random import *
 from scipy.signal import *
+import qdarkstyle
 
 class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
     def __init__(self):
@@ -34,14 +36,13 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         for view, title in zip(self.viewports, self.plotTitles):
             self.customize_plot(view, title)
 
-
         self.zeros = []
         self.poles = []
 
         self.added = "Zeros"
 
         self.current_index = 0
-        self.animation_speed = 1
+        self.graph_speed = 1
         self.is_animation_running = False
         self.is_signal_ended = False
 
@@ -53,7 +54,6 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         self.point_moving = None
 
         self.point_selected = False
-
 
         self.pair_mode = False
 
@@ -79,12 +79,11 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
 
         self.all_pass_a = 1
 
-        self.signalItemInput = pg.PlotDataItem([], pen = 'b', width = 2)
-        self.signalItemFiltered = pg.PlotDataItem([], pen = 'b', width = 2)
+        self.signalItemInput = pg.PlotDataItem([], pen = 'g', width = 2)
+        self.signalItemFiltered = pg.PlotDataItem([], pen = 'g', width = 2)
         self.plot_realtimeInput.addItem(self.signalItemInput)
         self.plot_realtimeFilter.addItem(self.signalItemFiltered)
         
-
         self.allpass_en = False
 
         self.selected_point = None
@@ -112,39 +111,27 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
 
         self.colors = ['#FF0000', '#FFA500', '#FFFF00', '#00FF00', '#00FFFF', '#0000FF', '#800080', '#FF00FF', '#FF1493', '#00FF7F', '#FFD700', '#FF6347', '#48D1CC', '#8A2BE2', '#20B2AA']
 
-
-
         self.btn_addZeros.clicked.connect(lambda: self.set_added("Zeros"))
         self.btn_addPoles.clicked.connect(lambda: self.set_added("Poles"))
-        self.btn_RemoveZeros.clicked.connect(lambda: self.remove_points("Zeros"))
-        self.btn_removePoles.clicked.connect(lambda: self.remove_points("Poles"))
+        self.btn_RemoveZeros.clicked.connect(lambda: self.remove_s("Zeros"))
+        self.btn_removePoles.clicked.connect(lambda: self.remove_s("Poles"))
         self.btn_removeAll.clicked.connect(self.remove_all)
 
         # Consolidate signal connections
-        self.btn_addCoeff.clicked.connect(self.add_coefficient)
-        self.btn_removeCoeff.clicked.connect(self.remove_coefficient)
-        self.btn_openFile.clicked.connect(self.open_file)
+        self.btn_addCoeff.clicked.connect(self.add_coef)
+        self.btn_removeCoeff.clicked.connect(self.remove_coef)
+        self.btn_openFile.clicked.connect(self.browse_signal)
         self.pair_mode_toggle.stateChanged.connect(self.toggle_pair_mode)
         self.all_pass_enable.stateChanged.connect(self.toggle_all_pass)
 
-
-        # self.actionImport.triggered.connect(self.open_zeros_poles)
-        # self.actionExport.triggered.connect(self.save_zeros_poles)
-
-        self.btn_play.clicked.connect(self.toggle_animation)
-
+        self.btn_play.clicked.connect(self.toggle_playback)
         self.checkBox.stateChanged.connect(self.toggle_mouse_drawing)
 
         self.btn_addCoeff.clicked.connect(self.update_plot_allpass)
         self.btn_removeCoeff.clicked.connect(self.update_plot_allpass)
         self.table_coeff.itemChanged.connect(self.update_plot_allpass)
 
-
-    
-
-
-        self.speed_slider.valueChanged.connect(self.set_animation_speed) # Set Animation speed when slide is changed
-
+        self.speed_slider.valueChanged.connect(self.set_graph_speed) # Set Animation speed when slide is changed
 
         self.btnClr.clicked.connect(self.clear_plots)
 
@@ -153,7 +140,6 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         # Create circle ROIs to show the unit circle and an additional circle of radius 2 
         self.roi_unitCircle = pg.CircleROI([-1, -1], [2, 2], pen=pg.mkPen('r',width=2), movable=False, resizable=False, rotatable = False)
         
-            
         # Set the origin point to the center of the widget
         self.plot_unitCircle.setYRange(-1.1, 1.1, padding=0)
         self.plot_unitCircle.setXRange(-1.1, 1.1, padding=0)
@@ -161,58 +147,21 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         size_policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.plot_unitCircle.setSizePolicy(size_policy)
 
-
         self.plot_unitCircle.addItem(self.roi_unitCircle)    
         self.roi_unitCircle.removeHandle(0)
 
-        self.plot_unitCircle.scene().sigMouseClicked.connect(self.on_click)
+        self.plot_unitCircle.scene().sigMouseClicked.connect(self.handle_click)
 
         self.animation_timer = QTimer()
-        self.animation_timer.timeout.connect(self.update_animation)
+        self.animation_timer.timeout.connect(self.update_graph)
 
         self.counter_max = 1
         self.counter_min = 0
-    
 
-        # Connect the sigMouseMoved signal to the on_mouse_move method in init_UI
-        self.plot_mouseInput.scene().sigMouseMoved.connect(self.on_mouse_move)
-
-        self.plot_unitCircle.scene().sigMouseMoved.connect(self.drag_point)
-
-
-        # Add these lines to create the shortcuts
-        save_shortcut = QShortcut(Qt.CTRL + Qt.Key_S, self)
-        save_shortcut.activated.connect(self.save_zeros_poles)
-
-        open_shortcut = QShortcut(Qt.CTRL + Qt.Key_P, self)
-        open_shortcut.activated.connect(self.open_zeros_poles)
-
-        open_shortcut = QShortcut(Qt.CTRL + Qt.Key_H, self)
-        open_shortcut.activated.connect(self.show_startup_help_window)
-    
-    def show_startup_help_window(self):
-        help_tip = QMessageBox(self)
-        help_tip.setIcon(QMessageBox.Information)
-        help_tip.setWindowTitle("Help")
-        help_tip.setText("Shortcuts: \n"+
-                         "CTRL+O: Open CSV File\n"+
-                         "CTRL+P: Import Zeros/Poles\n"+
-                         "CTRL+S: Export Zeros/Poles\n"+
-                         "\n Using the Z-Plane: \n \n"+
-                         "- Add using left click, use the buttons to pick Zeros or Poles \n"+
-                         "- Move or Remove a point by using right click. Click the 'Remove' button to toggle the action. Between Moving the point and removing the point, the point will be moved to the mouse position. \n"+
-                         "- Click the 'Clear' button to clear the Graphs. \n"+
-                         "\n Using the Unit Circle: \n \n"+
-                         "- Click the 'Play' button to start the animation. \n"+
-                         "- Click the 'Stop' button to stop the animation. \n")
-        help_tip.setStandardButtons(QMessageBox.Ok)
-        help_tip.setStandardButtons(QMessageBox.Ok)
-        help_tip.exec_()
-
+        # Connect the sigMouseMoved signal to the handle_mouse_pad method in init_UI
+        self.plot_mouseInput.scene().sigMouseMoved.connect(self.handle_mouse_pad)
+        self.plot_unitCircle.scene().sigMouseMoved.connect(self.drag_zero_pole)
         
-    # =========================================================================
-    # Handling Animation 
-    # =========================================================================
     def set_play_button_state(self):
         state_dict = {
             True: "Stop",
@@ -220,11 +169,11 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         }
         self.btn_play.setText(state_dict[self.is_animation_running])
 
-    def set_animation_speed(self):
-        self.animation_speed = int(self.speed_slider.value())
-        self.lbl_speed.setText(f"Speed: {self.animation_speed}")
+    def set_graph_speed(self):
+        self.graph_speed = int(self.speed_slider.value())
+        self.lbl_speed.setText(f"Speed: {self.graph_speed}")
 
-    def play_animation(self):
+    def play_graph(self):
         if self.is_signal_ended:
             print("Signal Ended")
             self.current_index = 0
@@ -235,22 +184,22 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         self.is_animation_running = True
         self.set_play_button_state()
 
-    def stop_animation(self):
+    def stop_graph(self):
         print("animation stopped")
         self.animation_timer.stop()
         self.is_animation_running = False
         self.set_play_button_state()
     
-    def toggle_animation(self):
+    def toggle_playback(self):
         self.is_animation_running = not self.is_animation_running
     
         if self.is_animation_running:
             self.filter_data()
-            self.play_animation()
+            self.play_graph()
         else:
-            self.stop_animation()
+            self.stop_graph()
 
-    def update_animation(self):
+    def update_graph(self):
         x_min , x_max = self.viewports[4].viewRange()[0]
         self.signalItemInput.setData(self.data[0:self.current_index])
         self.signalItemFiltered.setData(self.data_modified[0:self.current_index])
@@ -258,20 +207,16 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         if self.current_index > x_max:   
             for viewport in [self.plot_realtimeInput, self.plot_realtimeFilter]:
                 viewport.setLimits(xMax = self.current_index)
-                viewport.getViewBox().translateBy(x = self.animation_speed)
+                viewport.getViewBox().translateBy(x = self.graph_speed)
        
         if self.current_index >= len(self.data)-1:
-            self.stop_animation()
+            self.stop_graph()
             self.is_signal_ended = True
         
-        self.current_index += self.animation_speed # Convert the speed value to integer
+        self.current_index += self.graph_speed # Convert the speed value to integer
         QApplication.processEvents()
-
         
-    # =========================================================================
-    # Adding and Removing the All Pass Coefficients
-    # =========================================================================
-    def add_coefficient(self):
+    def add_coef(self):
         # Create a QTableWidgetItem
         coeff_item = QTableWidgetItem(self.comboBox.currentText())
         coeff_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
@@ -283,90 +228,10 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         
         
     # Removes the selected row from the table widget
-    def remove_coefficient(self):
+    def remove_coef(self):
         self.table_coeff.removeRow(self.table_coeff.currentRow()) 
-        
 
-       
-    
-    # =========================================================================
-    # Opening and Saving Zeros and Poles 
-    # =========================================================================
-    def save_zeros_poles(self):
-        try:
-            # Get the script directory and set the initial folder for saving files
-            script_directory = os.path.dirname(os.path.abspath(__file__))
-            initial_folder = os.path.join(script_directory, "Zeros-Poles")
-
-            # Prompt the user to choose a file name and location for saving
-            file_name, _ = QFileDialog.getSaveFileName(self, 'Save File', initial_folder, "CSV files (*.csv)")
-            path = file_name
-
-            if path:
-                # Ensure zeros and poles have the same length by padding with None
-                max_len = max(len(self.data_dict["Zeros"]), len(self.data_dict["Poles"]))
-                zeros_padded = self.data_dict["Zeros"] + [None] * (max_len - len(self.data_dict["Zeros"]))
-                poles_padded = self.data_dict["Poles"] + [None] * (max_len - len(self.data_dict["Poles"]))
-
-                # Convert the data_dict to a DataFrame
-                df = pd.DataFrame({
-                    'Zeros_x': [zero.x() if zero else None for zero in zeros_padded],
-                    'Zeros_y': [zero.y() if zero else None for zero in zeros_padded],
-                    'Poles_x': [pole.x() if pole else None for pole in poles_padded],
-                    'Poles_y': [pole.y() if pole else None for pole in poles_padded],
-                })
-
-                # Save the DataFrame to a CSV file
-                df.to_csv(path, index=False)
-
-        except Exception as e:
-            print(f"Error: {e}")
-
-    def open_zeros_poles(self):
-        try:
-            # Clear existing data for Zeros and Poles
-            self.data_dict["Zeros"] = []
-            self.data_dict["Poles"] = []
-
-            # Get the script directory and set the initial folder for opening files
-            script_directory = os.path.dirname(os.path.abspath(__file__))
-            initial_folder = os.path.join(script_directory, "Zeros-Poles")
-
-            # Prompt the user to choose a file for opening
-            file_name, _ = QFileDialog.getOpenFileName(self, 'Open File', initial_folder, "CSV files (*.csv)")
-            path = file_name
-
-            if path:
-                # Load data from the selected CSV file using pandas
-                df = pd.read_csv(path)
-
-                # Check if the columns have the same length
-                if len(df['Zeros_x']) != len(df['Zeros_y']) or len(df['Poles_x']) != len(df['Poles_y']):
-                    print("Error: Zeros and Poles arrays must be of the same length.")
-                    return
-
-                # Iterate through the loaded data and create Point instances for Zeros
-                for x, y in zip(df['Zeros_x'], df['Zeros_y']):
-                    if x is not None and y is not None and not (math.isnan(x) or math.isnan(y)):
-                        point = pg.Point(x, y)
-                        self.data_dict["Zeros"].append(point)
-
-                # Iterate through the loaded data and create Point instances for Poles
-                for x, y in zip(df['Poles_x'], df['Poles_y']):
-                    if x is not None and y is not None and not (math.isnan(x) or math.isnan(y)):
-                        point = pg.Point(x, y)
-                        self.data_dict["Poles"].append(point)
-
-                # Update the plot with the loaded data
-                self.update_plot()
-
-        except Exception as e:
-            print(f"Error: {e}")
-
-    # =========================================================================
-    # Opening New File 
-    # =========================================================================
-    def open_file(self):
+    def browse_signal(self):
         try:
             self.clear_plots()
             # Get the script directory and set the initial folder for file dialog
@@ -405,13 +270,10 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         except Exception as e:
             print(f"Error: {e}")
 
-    # =========================================================================
-    # Handling on Click 
-    # =========================================================================
-    def on_click(self, event):
+    def handle_click(self, event):
         if event.button() == Qt.LeftButton:
             if event.modifiers() == Qt.ControlModifier:
-                self.add_point(self.mouse_loc_circle, self.added)
+                self.add_zero_pole(self.mouse_loc_circle, self.added)
                 self.update_plot()
             else:
                 self.move_clicked = True
@@ -419,30 +281,24 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
 
         elif event.button() == Qt.RightButton:
             if self.x_last is not None and self.point_selected:
-                self.unselect_moving_point()
+                self.unselect_point()
             else:
-                self.remove_point(self.mouse_loc_circle)
+                self.remove_(self.mouse_loc_circle)
     
-    def unselect_moving_point(self):
-        self.remove_point(self.point_moving)
+    def unselect_point(self):
+        self.remove_(self.point_moving)
         point = pg.Point(self.x_last, self.y_last)
-        self.add_point(point, self.moved)
+        self.add_zero_pole(point, self.moved)
         if self.pair_selected:
-            self.remove_point(self.point_moving_pair)
+            self.remove_(self.point_moving_pair)
             point = pg.Point(self.x_last, -self.y_last)
-            self.add_point(point, self.moved)
+            self.add_zero_pole(point, self.moved)
         self.update_plot()
         self.x_last, self.y_last, self.point_selected, self.pair_selected, self.move_clicked = None, None, False, False, False
-
-
-
-    # =========================================================================
-    # Moving point 
-    # =========================================================================    
+ 
     def move_point(self, pos_data):
         if self.x_last is not None and self.point_selected:
             self.x_last, self.y_last, self.point_selected, self.pair_selected, self.move_clicked = None, None, False, False, False
-
         else:
             for dict_name in ["Zeros", "Poles"]:
                 self.move_point_from_list(dict_name, pos_data)
@@ -464,56 +320,49 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
                 self.point_moving_pair = pg.Point(self.x_last, -self.y_last)
                 break
 
-    def drag_point(self, pos):
+    def drag_zero_pole(self, pos):
         pos = self.plot_unitCircle.getViewBox().mapSceneToView(pos)
 
         self.mouse_loc_circle = pg.Point(pos.x(), pos.y())
         self.mouse_loc_circle_pair = pg.Point(pos.x(), -pos.y())
 
         if self.move_clicked and self.point_selected:
-            self.remove_point(self.point_moving)
-            self.add_point(self.mouse_loc_circle, self.moved)
+            self.remove_(self.point_moving)
+            self.add_zero_pole(self.mouse_loc_circle, self.moved)
             if self.pair_selected:
-                self.remove_point(self.point_moving_pair)
-                self.add_point(self.mouse_loc_circle_pair, self.moved)
+                self.remove_(self.point_moving_pair)
+                self.add_zero_pole(self.mouse_loc_circle_pair, self.moved)
 
             self.update_plot()
             self.point_moving = self.mouse_loc_circle
             self.point_moving_pair = self.mouse_loc_circle_pair
 
-
-    # =========================================================================
-    # Adding point 
-    # =========================================================================    
     def create_point(self, x, y):
         return pg.Point(x, y)
 
-    def add_point(self, point, dict):
+    def add_zero_pole(self, point, dict):
         # Assuming x and y are coordinates
         point = self.create_point(point.x(), point.y())
 
         if self.pair_mode:
             point_pair = self.create_point(point.x(), -point.y())
-            self.add_points_to_dict(point, point_pair, dict)
+            self.add_zero_poles_to_dict(point, point_pair, dict)
         else:
-            self.add_points_to_dict(point, None, dict)
+            self.add_zero_poles_to_dict(point, None, dict)
 
-    def add_points_to_dict(self, point, point_pair, dict):
+    def add_zero_poles_to_dict(self, point, point_pair, dict):
         self.data_dict[dict].append(point)
         if point_pair is not None:
             self.data_dict[dict].append(point_pair)
 
-    # =========================================================================
-    # Removing point 
-    # =========================================================================
-    def remove_point(self, point_data):
+    def remove_(self, point_data):
         for dict_name in ["Zeros", "Poles"]:
-            if self.remove_point_from_list(self.data_dict[dict_name], point_data, atol_cof = 0):
+            if self.remove__from_list(self.data_dict[dict_name], point_data, atol_cof = 0):
                 break
-            elif self.remove_point_from_list(self.data_dict[dict_name], point_data):
+            elif self.remove__from_list(self.data_dict[dict_name], point_data):
                 break
         
-    def remove_point_from_list(self, point_list, point_data, atol_cof = 0.03):
+    def remove__from_list(self, point_list, point_data, atol_cof = 0.03):
         for point in point_list.copy():
             if np.allclose([point.x(), point.y()], [point_data.x(), point_data.y()], atol = atol_cof):
                 point_list.remove(point)
@@ -524,7 +373,6 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
                 return True
         self.update_plot()
         return False
-
     
     def clear_plots(self):
         self.data = [0, 0]
@@ -533,9 +381,6 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         self.signalItemFiltered.setData([0])
         self.current_index = 0
         
-    # =========================================================================
-    # Update Zeros, Poles Plotting
-    # =========================================================================
     def update_plot(self):
         self.plot_unitCircle.clear()
 
@@ -551,20 +396,15 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
             small_circle = pg.ScatterPlotItem(pos=[(point.x(), point.y())], brush = self.data_brush[point_type], size=10, symbol = self.data_symbol[point_type])
             self.plot_unitCircle.addItem(small_circle)
         
-
-
-    # =========================================================================
-    # Update the Magnitude and Phase Response
-    # =========================================================================
     def update_response_plots(self):
         # Combine zeros and poles
-        z, p, z_allpass, p_allpass = self.get_all_pass_filter()
+        z, p, z_allpass, p_allpass = self.calc_all_pass_filter()
 
         # Calculate frequency response
         w, h = freqz(np.poly(z), np.poly(p))
 
         # Update class attributes
-        self.frequencies, self.mag_response, self.phase_response = w, np.abs(h), self.fix_phase(h)
+        self.frequencies, self.mag_response, self.phase_response = w, np.abs(h), self.calc_phase(h)
 
         # Plot magnitude response
         self.plot_response(self.plot_magResponse, self.frequencies, self.mag_response, pen=QColor(0, 255, 255), label='Magnitude', units='Linear', unit_bot = "Radians")
@@ -573,7 +413,7 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         self.plot_response(self.plot_phaseResponse, self.frequencies, self.phase_response, pen='r', label='Phase', units='Degrees', unit_bot = "Radians" , name = "Normal Phase Response")
         
         w, h = freqz(np.poly(z_allpass), np.poly(p_allpass))
-        self.frequencies, self.mag_response, self.phase_response = w, np.abs(h), self.fix_phase(h)
+        self.frequencies, self.mag_response, self.phase_response = w, np.abs(h), self.calc_phase(h)
         self.plot_phaseResponse.plot(x=self.frequencies, y=self.phase_response, pen='y', name = "AllPass Phase Response")
 
     def plot_response(self, plot, x, y, pen, label, units, unit_bot, name = ""):
@@ -583,19 +423,14 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         plot.setLabel('bottom', label, units=unit_bot)
         self.plot_phaseResponse.addLegend()
 
-
-    
-    def fix_phase(self, h):
+    def calc_phase(self, h):
         phase_response_deg = np.rad2deg(np.angle(h))
         phase_response_constrained  = np.where(phase_response_deg < 0, phase_response_deg + 360, phase_response_deg)
         phase_response_constrained  = np.where(phase_response_constrained  > 180, phase_response_constrained  - 360, phase_response_constrained )
         
         return phase_response_constrained 
     
-     # =========================================================================
-    # Check All Pass filter and filter the phase 
-    # =========================================================================
-    def get_all_pass_filter(self):
+    def calc_all_pass_filter(self):
         self.checked_coeffs = [0.0] # List to hold the selected coefficient values
         
         for row in range(self.table_coeff.rowCount()):
@@ -622,7 +457,7 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
             # Check if denominator is not zero before performing division
             if np.abs(a) > 0:
                 a_conj = 1 / np.conj(a)
-
+                # w and h used to plot the magnitude and phase response of the filter
                 w, h = freqz([-np.conj(a), 1.0], [1.0, -a])
                 all_pass_phs = np.add(np.angle(h), all_pass_phs)
                 self.plot_allPass.plot(w, np.angle(h), pen=self.colors[i % len(self.colors)], name = f'All pass{a.real}')
@@ -637,7 +472,6 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         self.plot_points(self.all_pass_poles, "Poles")
         self.plot_unitCircle.addItem(self.roi_unitCircle)
 
-        
         if len(self.checked_coeffs) > 1:
             self.plot_allPass.plot(w, all_pass_phs, pen=self.colors[-1], name = 'All pass Total')
         self.plot_allPass.addLegend()
@@ -651,32 +485,27 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
 
         return z, p, z_allpass, p_allpass
     
-
     def update_plot_allpass(self):
         self.update_response_plots()
-        _, _, z, p = self.get_all_pass_filter()
+        _, _, z, p = self.calc_all_pass_filter()
         # Calculate frequency response
         w, h = freqz(np.poly(z), np.poly(p))
-        self.phase_response = self.fix_phase(h)
+        self.phase_response = self.calc_phase(h)
     
-   
-    # =========================================================================
-    # Real Time Data Filtering
-    # =========================================================================
     def filter_data(self):
-        _,_, z, p = self.get_all_pass_filter()
-        numerator, denominator = zpk2tf(z, p, 1)
-        self.data_modified = np.real(lfilter(numerator, denominator, self.data))
-  
+        _,_, z, p = self.calc_all_pass_filter()
+        self.numerator, self.denominator = zpk2tf(z, p, 1) # Return polynomial transfer function representation from zeros and poles
+        order = len(z) + len(p)
 
+        if len(self.data) < order:  
+            new_data = np.real(lfilter(self.numerator, self.denominator, self.data))
+            np.append(self.data_modified, new_data[-1])
+        else:
+            new_data = np.real(lfilter(self.numerator, self.denominator, self.data[len(self.data)-order:]))
+            np.append(self.data_modified, new_data[-1])
+        # Filter data along one-dimension with an IIR or FIR filter.
 
-
-
-
-    # =========================================================================
-    # Draw Data Using Mouse Movement
-    # =========================================================================
-    def on_mouse_move(self, pos):
+    def handle_mouse_pad(self, pos):
         if  self.mouse_enable:
             if not self.data_opened:
                 self.data = []
@@ -697,10 +526,6 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
             # Update the filtered data
             self.filter_data()
 
-            # Update signalItemInput and signalItemFiltered data
-            self.signalItemInput.setData(self.data[:self.counter_max])
-            self.signalItemFiltered.setData(self.data_modified[:self.counter_max])
-
             # Adjust x_min and x_max for plotting
             x_max = len(self.data)
             x_min = max(0, x_max - 200)
@@ -709,35 +534,34 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
             self.plot_realtimeInput.setRange(xRange=[x_min, x_max])
             self.plot_realtimeFilter.setRange(xRange=[x_min, x_max])
 
+            # SetRange for real-time plots
+            self.data_modified = np.real(lfilter(self.numerator, self.denominator, self.data)) 
+            # Update signalItemInput and signalItemFiltered data
+            self.signalItemInput.setData(self.data[:self.counter_max])
+            self.signalItemFiltered.setData(self.data_modified[:self.counter_max])
+
             
         self.prev_mouse_pos = pos
-
-
 
     def reset_viewport_range(self):
         for plot in [self.plot_realtimeInput, self.plot_realtimeFilter]:
             plot.setRange(xRange=[0, 1000])
     
-
     def remove_all(self):
         self.data_dict["Zeros"].clear()
         self.data_dict["Poles"].clear()
         self.data_modified = self.data
         self.update_plot()
 
-    def remove_points(self, point_type):
+    def remove_s(self, point_type):
         self.data_dict[point_type].clear()
         self.update_plot()
-
 
     def set_added(self, point_type):
         self.added = point_type
 
-    
-    
     def toggle_pair_mode(self):
         self.pair_mode = not self.pair_mode
-    
     
     def toggle_all_pass(self):
         self.allpass_en = not self.allpass_en
@@ -748,11 +572,11 @@ class DigitalFilterDesigner(QMainWindow, Ui_MainWindow):
         self.mouse_enable = not self.mouse_enable
         self.reset_viewport_range()
 
-
-        
 if __name__ == "__main__":
-    import sys
     app = QApplication(sys.argv)
-    MainWindow = DigitalFilterDesigner()
-    MainWindow.show()
+    app.setWindowIcon(QIcon("assets/logo.jpg"))
+    window = DigitalFilterDesigner()
+    window.setWindowTitle("Digital Filter Designer")
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt6())
+    window.show()
     sys.exit(app.exec_())
